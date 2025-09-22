@@ -94,9 +94,12 @@
   <small style="color:var(--muted)">In-round: scores hidden. Leader(s) crowned. Full leaderboard appears between rounds.</small>
 </footer>
 
-<script src="/socket.io/socket.io.js"></script>
+<!-- Point the client at your Render server -->
+<script src="https://yoink-v2.onrender.com/socket.io/socket.io.js"></script>
 <script>
-  const socket = io();
+  const socket = io("https://yoink-v2.onrender.com", {
+    transports: ["websocket", "polling"]
+  });
   let state = null, myId = null, assemble = [];
   const $ = id => document.getElementById(id);
   const poolEl = $('pool'), bankEl = $('bank'), toastEl = $('toast');
@@ -174,75 +177,4 @@
     lbEl.innerHTML = '';
     if (s.leaderboard) {
       s.leaderboard.forEach((row, i) => {
-        const div = document.createElement('div'); div.className='player';
-        div.innerHTML = `<div>${i+1}. ${row.name}</div><div>Score ${row.score}</div>`;
-        lbEl.append(div);
-      });
-    }
-
-    // Pool grid (always render 16 cells)
-    poolEl.innerHTML = '';
-    const tiles = s.pool.slice(0, 16);
-    for (let i = 0; i < 16; i++) {
-      const d = document.createElement('div');
-      d.className = 'tile';
-      if (i < tiles.length) {
-        const L = tiles[i];
-        d.textContent = L;
-        if ('BCFHKMPVWY'.includes(L)) d.classList.add('t20');
-        if ('JQXZ'.includes(L)) d.classList.add('t30');
-        d.onclick = () => socket.emit('yoink', { roomCode: s.code, poolIndex: i });
-      } else {
-        d.classList.add('ghost');
-      }
-      poolEl.append(d);
-    }
-
-    // My bank
-    bankEl.innerHTML = '';
-    assemble = assemble.filter(idx => idx >= 0 && idx < (s.my?.bank?.length || 0));
-    (s.my?.bank || []).forEach((L, idx) => {
-      const b = document.createElement('div');
-      b.className = 'mini'; b.textContent = L;
-      if (assemble.includes(idx)) b.classList.add('sel');
-      b.onclick = () => {
-        const k = assemble.indexOf(idx);
-        if (k >= 0) assemble.splice(k,1); else assemble.push(idx);
-        renderWord(); renderBankSelectionOnly();
-      };
-      bankEl.append(b);
-    });
-
-    renderWord();
-  }
-
-  function renderBankSelectionOnly(){
-    [...bankEl.children].forEach((node, idx) => {
-      if (assemble.includes(idx)) node.classList.add('sel'); else node.classList.remove('sel');
-    });
-  }
-
-  function renderWord(){
-    const me = state?.my; if (!me) return;
-    const w = assemble.map(i => me.bank[i]).join('');
-    wordEl.textContent = w || '—';
-  }
-
-  let cdTimer = null;
-  function startCountdown(endsAt){
-    clearInterval(cdTimer);
-    const tick = () => {
-      const ms = Math.max(0, endsAt - Date.now());
-      cdEl.textContent = Math.ceil(ms/1000) + 's';
-    };
-    tick(); cdTimer = setInterval(tick, 250);
-  }
-
-  function flash(msg, isErr=false){
-    toastEl.className = 'toast ' + (isErr ? 'err' : 'ok');
-    toastEl.textContent = msg;
-    setTimeout(()=>{ if (toastEl.textContent === msg) toastEl.textContent=''; }, 2400);
-  }
-</script>
-</body>
-</html>
+        const div = document.createElement('div'); div.cl
