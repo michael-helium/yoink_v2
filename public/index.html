@@ -1,0 +1,248 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Yoink Words</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg:#0b0f15; --panel:#0f1622; --muted:#8ba1b3; --line:#1c2738;
+      --tile:#131c2a; --tile-20:#17243a; --tile-30:#1b1f36;
+      --accent:#5da9ff; --good:#9effa7; --bad:#ff96a1; --crown:#ffd65c;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:#e7edf4;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    header,footer{padding:12px 16px;background:#0d1420;border-bottom:1px solid var(--line)}
+    main{padding:16px;display:grid;gap:16px;grid-template-columns:1fr;max-width:960px;margin:0 auto}
+    @media(min-width:840px){main{grid-template-columns:300px 1fr}}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+    h3{margin:0 0 8px}.row{display:flex;gap:8px;align-items:center}
+    input,button{padding:12px;border-radius:12px;border:1px solid var(--line);background:#0b1220;color:#e7edf4;font-size:16px}
+    button{background:#0b1a2a;cursor:pointer}
+    .timer{font-variant-numeric:tabular-nums;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:#0c1524}
+    .pill{padding:4px 8px;border:1px solid var(--line);border-radius:999px;background:#0c1524;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(4,68px);gap:10px;justify-content:start}
+    .tile{width:68px;height:68px;display:grid;place-items:center;font-weight:900;font-size:26px;background:var(--tile);border:1px solid var(--line);border-radius:12px;user-select:none;cursor:pointer;transition:transform .05s}
+    .tile.t20{background:var(--tile-20);outline:1px solid #2a3e61}
+    .tile.t30{background:var(--tile-30);outline:1px solid #3b2a61}
+    .tile:active{transform:scale(.98)}
+    .ghost{visibility:hidden}
+    .bank{display:flex;flex-wrap:wrap;gap:8px;min-height:72px}
+    .mini{width:56px;height:56px;display:grid;place-items:center;background:var(--tile);border:1px solid var(--line);border-radius:10px;font-weight:800;font-size:22px;cursor:pointer}
+    .mini.sel{outline:2px solid var(--accent);transform:translateY(-2px)}
+    .players{display:flex;flex-direction:column;gap:8px}
+    .player{display:flex;justify-content:space-between;align-items:center;background:#0d1522;border:1px solid var(--line);border-radius:12px;padding:8px 10px}
+    .crown{margin-left:6px;color:var(--crown)}
+    .toast{min-height:20px;margin-top:6px}
+    .ok{color:var(--good)}.err{color:var(--bad)}
+    .board{position:relative}
+    .ping{position:absolute;pointer-events:none;font-size:12px;background:#0f1a2b;padding:4px 6px;border:1px solid var(--line);border-radius:8px;opacity:.95}
+  </style>
+</head>
+<body>
+<header class="row" style="justify-content:space-between">
+  <div class="row" style="gap:12px">
+    <strong>Yoink Words</strong>
+    <div id="phase" class="timer">LOBBY</div>
+    <div id="round" class="timer">—</div>
+    <div id="countdown" class="timer">—</div>
+  </div>
+  <div class="pill" id="roundMult">—</div>
+</header>
+
+<main>
+  <section class="panel">
+    <h3>Lobby</h3>
+    <div class="row" style="margin-bottom:8px;">
+      <input id="room" placeholder="Room code (e.g., PINE)" style="width:120px" />
+      <input id="name" placeholder="Your name" style="flex:1" />
+      <button id="join">Join</button>
+    </div>
+    <div class="row" style="margin-bottom:8px;">
+      <button id="start">Start game (host)</button>
+    </div>
+    <div class="players" id="plist"></div>
+    <div id="lbWrap" style="margin-top:12px; display:none;">
+      <h3>Leaderboard</h3>
+      <div id="leaderboard"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="row" style="justify-content:space-between;align-items:center;">
+      <h3>Pool</h3>
+      <small class="pill">Tap tiles to yoink → tap your bank to assemble</small>
+    </div>
+    <div class="board">
+      <div class="grid" id="pool"></div>
+      <div id="pings"></div>
+    </div>
+
+    <h3 style="margin-top:12px;">Your bank <small style="color:var(--muted)">(max 7)</small></h3>
+    <div id="bank" class="bank"></div>
+
+    <div class="row" style="margin-top:10px; gap:12px;">
+      <div class="pill" id="word">—</div>
+      <button id="clear">Clear</button>
+      <button id="submit">Submit</button>
+    </div>
+    <div class="toast" id="toast"></div>
+  </section>
+</main>
+
+<footer class="row">
+  <small style="color:var(--muted)">In-round: scores hidden. Leader(s) crowned. Full leaderboard appears between rounds.</small>
+</footer>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+  let state = null, myId = null, assemble = [];
+  const $ = id => document.getElementById(id);
+  const poolEl = $('pool'), bankEl = $('bank'), toastEl = $('toast');
+  const phaseEl = $('phase'), roundEl = $('round'), cdEl = $('countdown');
+  const plistEl = $('plist'), lbWrap = $('lbWrap'), lbEl = $('leaderboard'), multEl = $('roundMult');
+  const wordEl = $('word'), pingsEl = $('pings');
+
+  // Join/start
+  $('join').onclick = () => {
+    const room = ($('room').value || '').trim().toUpperCase() || 'PINE';
+    const name = ($('name').value || '').trim() || ('Player' + Math.floor(Math.random()*100));
+    localStorage.setItem('room', room); localStorage.setItem('name', name);
+    socket.emit('create_or_join', { roomCode: room, name });
+  };
+  $('start').onclick = () => { if (state) socket.emit('start_game', { roomCode: state.code }); };
+  $('clear').onclick = () => { assemble = []; renderWord(); };
+  $('submit').onclick = () => {
+    const me = state?.my; if (!me) return;
+    if (assemble.length < 2 || assemble.length > 7) { flash('Word must be 2–7 letters', true); return; }
+    socket.emit('submit_word', { roomCode: state.code, consumeIndices: assemble });
+  };
+
+  // restore inputs
+  (function restore(){
+    const r = localStorage.getItem('room'); if (r) $('room').value = r;
+    const n = localStorage.getItem('name'); if (n) $('name').value = n;
+  })();
+
+  socket.on('connect', () => { myId = socket.id; });
+  socket.on('error_msg', m => flash(m, true));
+  socket.on('invalid_word', ({word, reason}) => flash(`❌ ${word || ''} ${reason}`, true));
+  socket.on('valid_word', ({word, points}) => flash(`✅ ${word} (+${points})`));
+
+  socket.on('yoink_fx', ({ id, name, letter, at }) => {
+    try {
+      const gridRect = poolEl.getBoundingClientRect();
+      const cell = poolEl.children[at];
+      if (!cell) return;
+      const rect = cell.getBoundingClientRect();
+      const ping = document.createElement('div');
+      ping.className = 'ping';
+      ping.textContent = `${name} → ${letter}`;
+      ping.style.left = (rect.left - gridRect.left + 4) + 'px';
+      ping.style.top = (rect.top - gridRect.top - 24) + 'px';
+      pingsEl.append(ping);
+      setTimeout(()=>ping.remove(), 900);
+    } catch {}
+  });
+
+  socket.on('state', s => { state = s; renderAll(); });
+
+  function renderAll(){
+    const s = state; if (!s) return;
+
+    phaseEl.textContent = s.phase.toUpperCase();
+    roundEl.textContent = (s.roundIdx >= 0) ? `Round ${s.roundIdx+1}/3` : '—';
+    multEl.textContent = `Round bonus: ${Math.round((s.roundMult||1)*100)}%`;
+    if (s.endsAt) startCountdown(s.endsAt); else cdEl.textContent = '—';
+
+    // Players list (scores hidden during rounds)
+    plistEl.innerHTML = '';
+    s.players.forEach(p => {
+      const row = document.createElement('div'); row.className = 'player';
+      const left = document.createElement('div'); left.textContent = p.name;
+      const right = document.createElement('div');
+      if (Array.isArray(s.leaderIds) && s.leaderIds.includes(p.id)) {
+        right.innerHTML = `<span class="crown">👑</span>`;
+      } else { right.innerHTML = `<span class="crown" style="opacity:.25">👑</span>`; }
+      row.append(left, right);
+      plistEl.append(row);
+    });
+
+    // Leaderboard only in intermission/final
+    lbWrap.style.display = (s.leaderboard ? 'block' : 'none');
+    lbEl.innerHTML = '';
+    if (s.leaderboard) {
+      s.leaderboard.forEach((row, i) => {
+        const div = document.createElement('div'); div.className='player';
+        div.innerHTML = `<div>${i+1}. ${row.name}</div><div>Score ${row.score}</div>`;
+        lbEl.append(div);
+      });
+    }
+
+    // Pool grid (always render 16 cells)
+    poolEl.innerHTML = '';
+    const tiles = s.pool.slice(0, 16);
+    for (let i = 0; i < 16; i++) {
+      const d = document.createElement('div');
+      d.className = 'tile';
+      if (i < tiles.length) {
+        const L = tiles[i];
+        d.textContent = L;
+        if ('BCFHKMPVWY'.includes(L)) d.classList.add('t20');
+        if ('JQXZ'.includes(L)) d.classList.add('t30');
+        d.onclick = () => socket.emit('yoink', { roomCode: s.code, poolIndex: i });
+      } else {
+        d.classList.add('ghost');
+      }
+      poolEl.append(d);
+    }
+
+    // My bank
+    bankEl.innerHTML = '';
+    assemble = assemble.filter(idx => idx >= 0 && idx < (s.my?.bank?.length || 0));
+    (s.my?.bank || []).forEach((L, idx) => {
+      const b = document.createElement('div');
+      b.className = 'mini'; b.textContent = L;
+      if (assemble.includes(idx)) b.classList.add('sel');
+      b.onclick = () => {
+        const k = assemble.indexOf(idx);
+        if (k >= 0) assemble.splice(k,1); else assemble.push(idx);
+        renderWord(); renderBankSelectionOnly();
+      };
+      bankEl.append(b);
+    });
+
+    renderWord();
+  }
+
+  function renderBankSelectionOnly(){
+    [...bankEl.children].forEach((node, idx) => {
+      if (assemble.includes(idx)) node.classList.add('sel'); else node.classList.remove('sel');
+    });
+  }
+
+  function renderWord(){
+    const me = state?.my; if (!me) return;
+    const w = assemble.map(i => me.bank[i]).join('');
+    wordEl.textContent = w || '—';
+  }
+
+  let cdTimer = null;
+  function startCountdown(endsAt){
+    clearInterval(cdTimer);
+    const tick = () => {
+      const ms = Math.max(0, endsAt - Date.now());
+      cdEl.textContent = Math.ceil(ms/1000) + 's';
+    };
+    tick(); cdTimer = setInterval(tick, 250);
+  }
+
+  function flash(msg, isErr=false){
+    toastEl.className = 'toast ' + (isErr ? 'err' : 'ok');
+    toastEl.textContent = msg;
+    setTimeout(()=>{ if (toastEl.textContent === msg) toastEl.textContent=''; }, 2400);
+  }
+</script>
+</body>
+</html>
